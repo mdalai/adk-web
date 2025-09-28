@@ -179,7 +179,7 @@ export class ChatComponent implements OnInit, AfterViewInit, OnDestroy {
   longRunningEvents: any[] = [];
   functionCallEventId = '';
   redirectUri = URLUtil.getBaseUrlWithoutPath();
-  showSidePanel = true;
+  showSidePanel = false;
   useSse = false;
   currentSessionState: SessionState|undefined = {};
   root_agent = ROOT_AGENT;
@@ -354,10 +354,7 @@ export class ChatComponent implements OnInit, AfterViewInit, OnDestroy {
     this.traceService.hoveredMessageIndicies$.subscribe(i => this.hoveredEventMessageIndices = i);
   }
 
-  ngAfterViewInit() {
-    this.showSidePanel = true;
-    this.sideDrawer()?.open();
-  }
+  ngAfterViewInit() {}
 
   selectApp(appName: string) {
     if (appName != this.appName) {
