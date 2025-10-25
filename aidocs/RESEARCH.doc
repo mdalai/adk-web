@@ -1,0 +1,165 @@
+# Angular Application Startup Analysis
+
+This document outlines the startup process of the Angular application.
+
+## 1. Entry Point (`src/main.ts`)
+
+- The application starts by fetching a configuration file from `./assets/config/runtime-config.json`.
+- It then bootstraps the `AppComponent` as the root component.
+- A number of services are provided at the root level, making them available throughout the application. Key services include:
+    - `SessionService`
+    - `AgentService`
+    - `WebSocketService`
+    - `AudioRecordingService` & `AudioPlayingService`
+    - `VideoService`
+    - `StreamChatService`
+    - `EventService`
+    - `TraceService`
+
+## 2. Root Component (`src/app/app.component.ts`)
+
+- The `AppComponent` is the root component of the application.
+- Its template (`app.component.html`) contains a single element: `<app-chat>`.
+- This means the `ChatComponent` is the main component that is displayed when the application starts.
+
+## 3. Main Component (`src/app/components/chat/chat.component.ts`)
+
+- The `ChatComponent` is the core of the application and implements the main chat interface.
+- It injects a large number of services to handle various functionalities.
+- **Initialization (`ngOnInit`):**
+    - It synchronizes the selected "app" (or agent) from the URL query parameters.
+    *   It sets up listeners for the chat stream to handle incoming messages and errors.
+    *   Handles OAuth callbacks.
+    *   Subscribes to the agent's loading state to show and hide loading indicators.
+    *   Subscribes to trace and event data.
+- **Session Management:**
+    *   It can create new sessions.
+    *   It can load existing sessions based on a session ID from the URL.
+    *   It can import and export sessions.
+- **Message Handling:**
+    *   It can send and receive messages.
+    *   It supports streaming messages using Server-Sent Events (SSE).
+    *   It can handle different types of message parts, including text, function calls, function responses, and artifacts.
+    *   It can display "thoughts" from the agent.
+
+## 4. Session Setup in `ChatComponent`
+
+The `ChatComponent` sets up a session through the following steps:
+
+1.  **Determine Application/Agent:** The component reads the `app` query parameter from the URL to identify which agent to connect to.
+2.  **Load Session from URL:** It checks for a `session` query parameter.
+    - If a session ID is present, it calls `sessionService.getSession()` to fetch the session data.
+    - If the session is found, it loads the session's history and state.
+    - If the session is not found, it proceeds to create a new one.
+3.  **Create New Session:** If no session is specified in the URL, or if the specified session is not found, it calls `sessionService.createSession()` to create a new session on the backend.
+4.  **Update State and URL:** Once a session is established (either loaded or newly created), the component updates its internal state with the session ID and other session data. It also updates the URL to include the current session ID if the feature is enabled.
+
+This provides a comprehensive overview of how the application starts and establishes a user session.
+
+## 5. Service Interaction Flow
+
+This section details the interaction between the `ChatComponent` and the various services.
+
+### 1. Component Initialization (`ngOnInit`)
+
+1.  **`FeatureFlagService`**: The component checks this service to see which features are enabled.
+2.  **`AgentService` and `Router`**:
+    *   It calls `agentService.listApps()` to get a list of available agents.
+    *   It uses the `Router` and `ActivatedRoute` services to read the URL's query parameters to see if a specific agent (`app`) is already selected.
+    *   If an agent is selected in the URL, it calls `agentService.setApp()` to set the active agent.
+3.  **`SessionService`**:
+    *   Once the agent is determined, the component calls `loadSessionByUrlOrReset()`.
+    *   This method uses the `SessionService` to either fetch an existing session (if a session ID is in the URL) or create a new one by calling `sessionService.createSession()`.
+4.  **`StreamChatService`**: The component subscribes to `streamChatService.onStreamClose()` to listen for when the chat stream is closed.
+5.  **`TraceService` and `EventService`**: The component subscribes to these services to receive and display trace and event data.
+
+### 2. Sending a Message (`sendMessage`)
+
+1.  **`LocalFileService`**: If the user has attached any files, the `localFileService.createMessagePartFromFile()` method is called.
+2.  **`AgentService`**:
+    *   The component constructs a request object (`AgentRunRequest`).
+    *   `agentService.runSse(req)` is called to send the user's message to the backend agent.
+
+### 3. Processing the Response (within the `runSse` subscription)
+
+1.  **`MatSnackBar`**: If any errors occur, this service is used to display a notification.
+2.  **`ArtifactService`**: If the agent's response includes an artifact, the `artifactService.getArtifactVersion()` method is called to fetch the artifact's data.
+3.  **`TraceService` and `GraphService`**: As events and trace data are received, they are passed to the `TraceService`. If a visual graph of the events is available, the `GraphService` is used to render it.
+4.  **`StringToColorService`**: This service is used to assign a unique color to each agent's icon.
+
+### Summary of the Flow:
+
+1.  **Setup Phase**: `ChatComponent` uses services like `FeatureFlagService`, `AgentService`, and `SessionService` to initialize the application, select an agent, and establish a session.
+2.  **User Action**: The user sends a message.
+3.  **Request Phase**: `ChatComponent` uses `AgentService` to send the message to the backend.
+4.  **Response Phase**: `ChatComponent` receives a stream of responses and uses a variety of services (`ArtifactService`, `TraceService`, etc.) to process and display the information.
+
+## 6. SSE vs. WebSocket Usage
+
+The application uses both Server-Sent Events (SSE) and WebSockets for different features. The choice is not dynamic but is hardcoded based on the feature being used.
+
+### Server-Sent Events (SSE)
+
+*   **Direction:** Unidirectional (Server -> Client).
+*   **Protocol:** HTTP/HTTPS.
+*   **Use Case:** Used for the primary chat interaction to stream the agent's text response back to the client.
+*   **Implementation:** The `sendMessage()` method in `ChatComponent` always calls `agentService.runSse()` to send a text message and receive a streamed response.
+
+### WebSockets
+
+*   **Direction:** Bidirectional (Client <-> Server).
+*   **Protocol:** WebSocket (`ws://`, `wss://`).
+*   **Use Case:** Used for features that require real-time, two-way communication, such as audio and video streaming.
+*   **Implementation:** The `toggleAudioRecording()` and `toggleVideoRecording()` methods in `ChatComponent` call methods on the `StreamChatService`, which uses WebSockets to handle the bidirectional streaming of audio and video data.
+
+### Summary of Choice
+
+*   **Text Chat:** Always uses SSE.
+*   **Audio/Video Chat:** Always uses WebSockets.
+
+The user's action (sending a text message vs. starting audio/video recording) determines which communication protocol is used.
+
+## 7. WebSocket Workflow
+
+This section details the workflow for WebSocket communication, which is used for real-time audio and video streaming.
+
+### 1. Initiation (`ChatComponent`)
+
+- The user clicks the microphone or video icon.
+- This calls `toggleAudioRecording()` or `toggleVideoRecording()` in the `ChatComponent`.
+- These methods delegate the task to the `StreamChatService` by calling `startAudioChat()` or `startVideoChat()`.
+
+### 2. Orchestration (`StreamChatService`)
+
+This service acts as a middleman, coordinating the WebSocket connection and media recording.
+
+1.  **Connect:**
+    - It constructs the WebSocket URL (e.g., `wss://your-server.com/run_live?...`).
+    - It calls `this.webSocketService.connect(URL)` to establish the connection.
+2.  **Start Recording:**
+    - It calls `this.audioRecordingService.startRecording()` or `videoService.startRecording()` to begin capturing media.
+3.  **Send Data Periodically:**
+    - It uses `setInterval` to repeatedly grab the latest chunk of audio or video data.
+    - It wraps the data in a `LiveRequest` object and sends it over the WebSocket by calling `this.webSocketService.sendMessage(request)`.
+
+### 3. Core WebSocket Handling (`WebSocketService`)
+
+This service manages the low-level WebSocket connection using `WebSocketSubject` from RxJS.
+
+1.  **`connect(serverUrl)`:**
+    - It creates a new `WebSocketSubject`, which connects to the server.
+    - It subscribes to the socket to handle incoming messages (e.g., the agent's audio response) and errors.
+2.  **`sendMessage(data)`:**
+    - This method is called by the `StreamChatService`.
+    - It converts the media data to a base64 string and sends it to the server through the open WebSocket connection.
+3.  **`closeConnection()`:**
+    - When the stream is over, this method is called to gracefully close the WebSocket connection.
+
+### Summary of the Flow
+
+1.  **`ChatComponent`** tells `StreamChatService` to start.
+2.  **`StreamChatService`** tells `WebSocketService` to connect and `Audio/VideoService` to start recording.
+3.  **`Audio/VideoService`** captures media.
+4.  **`StreamChatService`** periodically gets the media and tells `WebSocketService` to send it.
+5.  **`WebSocketService`** sends the data to the server and receives audio data back, which it then plays.
+6.  When finished, **`ChatComponent`** tells **`StreamChatService`** to stop, which closes the connection.
